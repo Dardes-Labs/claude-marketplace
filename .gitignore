@@ -1,0 +1,28 @@
+.DS_Store
+
+# Swift build artifacts
+.build/
+build/
+*.xcodeproj/
+Packages/
+Package.resolved
+*.swiftpm/
+
+# Python
+__pycache__/
+*.pyc
+
+# User-local medication state (must never be committed)
+*.taken_*
+medications.toml
+!medications.example.toml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Claude Code / tooling local state (machine-specific, never shared)
+.claude/settings.local.json
+.serena/project.local.yml
+.serena/cache/

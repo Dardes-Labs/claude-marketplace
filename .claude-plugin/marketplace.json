@@ -1,0 +1,14 @@
+{
+  "name": "dardes",
+  "owner": {
+    "name": "agnislav-o",
+    "email": "agnislav@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "medication-reminder",
+      "source": "./plugins/medication-reminder",
+      "description": "Priority-aware medication reminder that runs as a SessionStart hook, checks Apple HealthKit, and sends macOS notifications when meds aren't logged."
+    }
+  ]
+}
