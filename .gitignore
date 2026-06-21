@@ -19,5 +19,4 @@ __pycache__/
 
 # Claude Code / tooling local state (machine-specific, never shared)
 .claude/settings.local.json
-.serena/project.local.yml
-.serena/cache/
+.serena/
