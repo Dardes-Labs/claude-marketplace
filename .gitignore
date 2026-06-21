@@ -12,11 +12,6 @@ Package.resolved
 __pycache__/
 *.pyc
 
-# User-local medication state (must never be committed)
-*.taken_*
-medications.toml
-!medications.example.toml
-
 # Editor
 .vscode/
 .idea/

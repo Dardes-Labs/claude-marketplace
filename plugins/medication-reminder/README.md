@@ -1,162 +1,74 @@
-# medication-reminder
+# TaDa — companion plugin
 
-Priority-aware medication reminder for Claude Code. Runs as a SessionStart hook, checks an iCloud-synced flag for today's logged dose, and sends a macOS notification if anything is overdue — respecting per-medication priority and time windows so it doesn't cry wolf.
+Companion Claude Code plugin for **TaDa**, a per-dose medication-adherence system. The core is the TaDa **iOS app**; this plugin is the Mac surface. It reads the per-dose `state.json` the app syncs through iCloud Drive, nudges you (macOS notification) about scheduled doses you haven't logged, and lets you mark a dose **Taken** or **Skipped** from the Mac.
 
 Built because ADHD + "just remember to take it" don't mix.
 
+> [!IMPORTANT]
+> **This README describes the TaDa target, not the shipped code.** The scripts in this directory still implement the **legacy** model — a single per-day iCloud flag (`taken_YYYY-MM-DD`), a `medications.toml` config, a Python priority evaluator, and a dormant Swift HealthKit CLI. The rewrite to the per-dose `state.json` model below ships with the `medication-reminder` → `tada` rename. Design source of truth: [`tada-medication-sync.md`](../../.claude/prds/tada-medication-sync.md).
+
 ---
 
-## How it works
+## What it does
+
+- **Reads per-dose state.** The TaDa iOS app reads your medication schedule from Apple Health and writes a per-dose `state.json` into iCloud Drive. This plugin reads it — there is no local config.
+- **Nudges on pending doses.** At SessionStart it checks today's doses and sends a macOS notification for any still `pending` past their scheduled time. Done for the day → silent.
+- **Logs from the Mac.** Mark a dose **Taken** or **Skipped** from the Mac and the plugin writes the status back into `state.json` (`source: "plugin"`). The iOS app picks that up and mirrors it into Apple Health — the plugin itself **never touches HealthKit**.
+- **Config-less + app-dependent.** The medication list and schedule come entirely from `state.json`. Without the iOS app nothing produces state, so the plugin is inert.
+
+---
+
+## How it works (target flow)
 
 ```
-SessionStart hook (session-start.sh)
-    └── nohup medication-check.sh &  (detached, Claude Code keeps going)
-            ├── local fast-path:    ~/.medication/taken_YYYY-MM-DD          → exit silently
-            ├── iCloud-synced flag: iCloud/MedicationCheck/taken_YYYY-MM-DD → copy to local, exit silently
-            └── evaluate-priority.py <medications.toml>     → emits actions
-                    └── osascript display notification ...
+SessionStart hook
+    └── read  iCloud/MedicationCheck/state.json
+            └── for each medication → each dose scheduled for today:
+                    pending and past scheduled_at  → macOS notification
+                    taken / skipped                → silent
+Mark from Mac (Taken / Skipped)
+    └── write dose status + logged_at + source:"plugin" back to state.json
+            └── iOS app mirrors the dose into Apple Health (HKMedicationDoseEvent)
 ```
 
-Non-blocking by design: the hook detaches the worker and returns exit 0 instantly. If iCloud isn't reachable or the flag doesn't exist, the worker falls through to the priority evaluator — your session is never delayed or disrupted.
+Non-blocking by design: the SessionStart hook detaches its worker and returns instantly, so a session is never delayed. If iCloud isn't reachable it simply no-ops until the file is available.
 
-The "did I take it" signal is a zero-byte file named `taken_YYYY-MM-DD` written into iCloud Drive by an iOS Shortcut on your phone. When you tap the Shortcut after taking your meds, the file syncs to the Mac within seconds and the worker treats today as done.
+---
+
+## The sync contract
+
+State lives at `~/Library/Mobile Documents/com~apple~CloudDocs/MedicationCheck/state.json`, read **and** written by both surfaces. Each dose is keyed by `(medication id, date, scheduled_at)`; `status` ∈ `taken` / `skipped` / `pending`; conflicts resolve by **last-write-wins on `logged_at`**; `source` (`ios-app` / `widget` / `plugin` / `apple-health`) tells the app what to mirror and prevents loops. Medication `id` is the primary key (`healthkit:<medicationConceptIdentifier>`); `name` is display-only. Full versioned schema (`schema_version: "1.0"`): **FR-6** of [`tada-medication-sync.md`](../../.claude/prds/tada-medication-sync.md).
+
+---
+
+## Why the Mac plugin never touches HealthKit
+
+By design the **iOS app is the sole HealthKit writer**; the Mac plugin works only through `state.json`. That isn't a stopgap — HealthKit on macOS is doubly gated (verified 2026-04-30):
+
+1. **Capability gating.** HealthKit isn't in [Apple's macOS supported-capabilities list](https://developer.apple.com/help/account/reference/supported-capabilities-macos/) — for a macOS App ID the standard capability checkbox is disabled. The only path is an Apple-reviewed **Capability Request**, granted per-app and not guaranteed.
+2. **Signing / AMFI.** `com.apple.developer.healthkit` is a *restricted* entitlement; macOS `amfid` SIGKILLs ad-hoc-signed binaries that carry it — so it needs a fully provisioned, signed app, not a hook-invoked CLI.
+
+The medication types do exist in the macOS 26 SDK (`HKMedicationDoseEvent`, `HKMedicationConcept`, `HKUserAnnotatedMedication`) — the framework is there, only the entitlement is gated. On iOS both entitlements are self-service, which is why the app owns the HealthKit side. (The dormant legacy Swift CLI at `swift/Sources/MedicationCheck/main.swift` predates this decision and is slated for removal in the rewrite.)
 
 ---
 
 ## Install
 
-```bash
-cd plugins/medication-reminder
-./install.sh
 ```
-
-`install.sh` seeds `~/.medication/medications.toml` from the example (if missing), creates the `iCloud Drive/MedicationCheck/` folder, and prints Shortcut setup instructions. No code signing, no Apple Developer Program required.
-
-Then in Claude Code:
-
-```
-/plugin marketplace add <repo>
+/plugin marketplace add agnislav-o/claude-marketplace
 /plugin install medication-reminder@dardes
 ```
 
-### Set up the iOS Shortcut
-
-**Quick install (recommended):** on your iPhone, tap this iCloud link to add the pre-built Shortcut: `<paste-your-icloud-shortcut-link-here>`. Shortcuts will open with a preview, tap **Add Shortcut**, and you're done. The Shortcut also propagates automatically to your iPad and Apple Watch via iCloud sync.
-
-On first run, iOS will ask permission to write to iCloud Drive — allow it once and the Shortcut runs silently from then on. Add the Shortcut to your Home Screen, lock-screen widget stack, or wire it into a Health automation that fires when you log a medication.
-
-**Build it yourself (alternative — useful if you want to read what it does, or customize the iCloud Drive folder name):** open Shortcuts.app on iPhone and create a new shortcut with three actions:
-
-1. **Get Current Date** → **Format Date** (format: `yyyy-MM-dd`).
-2. **Text** with an empty value (we just want a zero-byte flag file).
-3. **Save File**:
-   - Service: **iCloud Drive**
-   - Destination: **Shortcuts → MedicationCheck** (create the folder if missing — must match `MEDICATION_ICLOUD_DIR` if you've overridden it)
-   - File name: `taken_<formatted-date from step 1>`
-   - Overwrite existing file: **on**
-   - Don't ask where to save: **on**
-
-Name it **"Mark meds taken"**.
-
-**Verify end-to-end** before the next Claude Code session: tap the Shortcut on iPhone, wait ~10s for iCloud sync, then on Mac:
-
-```bash
-ls -la "$HOME/Library/Mobile Documents/com~apple~CloudDocs/MedicationCheck"
-```
-
-You should see `taken_YYYY-MM-DD` for today's date.
+You also need the **TaDa iOS app**, signed into the same iCloud account — it's what produces `state.json`. (The legacy `install.sh` seeds a `medications.toml`; that step goes away in the rewrite.)
 
 ---
 
-## Configuration
-
-Copy the example and edit:
-
-```bash
-cp config/medications.example.toml ~/.medication/medications.toml
-```
-
-Each `[[medication]]` entry has four fields — only `name` and `priority` are required:
-
-```toml
-[[medication]]
-name = "Adderall XR"
-priority = "crucial"      # "crucial" | "important" | "optional"
-take = "morning"          # keyword or "HH:MM" — default "anytime"
-deadline = "15:00"        # optional hard cut-off; past this = skip today
-note = "Take ASAP after waking."
-```
-
-`take` accepts keywords (`morning`, `noon`, `afternoon`, `evening`, `night`, `anytime`) that expand to sensible windows, or an `HH:MM` target (window extends 2 hours past the target). Past the soft window with **no deadline set**, behavior is driven by priority — `crucial` keeps nagging, `important` and `optional` go quiet.
-
-### Priority semantics
-
-The actual mapping from (priority, window, now) → (action, message) lives in `scripts/evaluate-priority.py`. See the TODO block there — it's intentionally left for the owner to tune, because what counts as "nag me" is personal.
-
-Output actions the worker understands:
-
-| Action | Behavior |
-| --- | --- |
-| `urgent` | macOS notification with "urgent" title |
-| `remind` | macOS notification with "reminder" title |
-| `skip` | no notification (explicitly skipped for today) |
-| `silent` | no notification (too early / not yet relevant) |
-
----
-
-## Environment variables
+## Environment variables (target)
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `MEDICATION_STATE_DIR` | `~/.medication` | Where local flag + config live |
-| `MEDICATION_CONFIG` | `$MEDICATION_STATE_DIR/medications.toml` | Config path |
-| `MEDICATION_ICLOUD_DIR` | `~/Library/Mobile Documents/com~apple~CloudDocs/MedicationCheck` | iCloud Drive folder watched for the daily flag |
+| `MEDICATION_ICLOUD_DIR` | `~/Library/Mobile Documents/com~apple~CloudDocs/MedicationCheck` | iCloud Drive folder holding `state.json` |
+| `MEDICATION_STATE_DIR` | `~/.medication` | Local worker scratch + log |
 | `MEDICATION_LOG_FILE` | `$MEDICATION_STATE_DIR/check.log` | Worker log (nohup) |
 
----
-
-## How "taken" state is tracked
-
-Two flag files, both date-keyed by today's local calendar day:
-
-1. **Local fast-path** — `~/.medication/taken_YYYY-MM-DD`. Single-day "everything is done, shut up" override. Worker exits silently as soon as it sees this file. Touch it manually to suppress reminders for the rest of the day.
-2. **iCloud-synced flag** — `iCloud Drive/MedicationCheck/taken_YYYY-MM-DD`. Written by the iOS Shortcut on your phone. First time the worker sees it, it copies it to the local fast-path so subsequent checks don't hit iCloud's filesystem at all.
-
-If control reaches `evaluate-priority.py`, neither flag exists. The evaluator treats every configured medication as unfulfilled and decides per-med action purely from `priority + take-window + now`.
-
-### Known gap — per-medication state
-
-Both flags are **binary for the whole day, not per-medication**. If you tap the Shortcut after taking one of three configured meds, the flag is set and the worker stops reminding you about the other two. Options to close this:
-
-- **Per-med Shortcuts** — one Shortcut per medication, each writes `taken_YYYY-MM-DD_<slug>`. Simple but you tap once per med.
-- **Single Shortcut with med-name input** — Shortcut prompts for which med, writes the slug-suffixed flag. Slight friction but one icon.
-- **Ignore Shortcut taps for some priorities** — keep coarse-grain for `optional`, switch to per-med for `crucial`.
-
-Ships with the coarse-grained model. File an issue on yourself when you decide which variant fits your routine.
-
----
-
-## Manually marking today done
-
-Without using the Shortcut (e.g. you took the meds on the road, no phone handy):
-
-```bash
-# Suppress on this Mac only:
-touch ~/.medication/taken_$(date +%Y-%m-%d)
-
-# Or let it propagate to other Macs via iCloud:
-touch "$HOME/Library/Mobile Documents/com~apple~CloudDocs/MedicationCheck/taken_$(date +%Y-%m-%d)"
-```
-
----
-
-## HealthKit on macOS — why it's not the data source (yet)
-
-The original design read medication-log samples directly from HealthKit on the Mac. That hit two walls:
-
-1. **Capability gating.** HealthKit isn't in [Apple's macOS supported-capabilities list](https://developer.apple.com/help/account/reference/supported-capabilities-macos/) — for a macOS App ID, the standard capability checkbox is disabled. The only path is a **Capability Request** submitted via the App ID's Capability Requests tab, where Apple reviews a justification form per app. Approval is per-app and not guaranteed.
-2. **iOS-vs-macOS SDK divergence.** `HKCategoryTypeIdentifierMedicationLog` (the iOS 16+ identifier most medication-tracking code uses) doesn't exist in the macOS SDK at all. macOS 26 introduces a different API surface — `HKMedicationDoseEvent`, `HKMedicationConcept`, `HKUserAnnotatedMedication` — that does exist on macOS but requires the granted entitlement.
-
-**Net:** HealthKit-on-macOS for this plugin is a combination of (a) waiting for Apple's capability grant and (b) rewriting the Swift CLI to use the macOS-26 medication API. The iCloud Drive flag is the working architecture in the meantime, and it's good enough that the HealthKit path is genuinely *optional* if the request lands.
-
-The dormant Swift CLI source is preserved at `swift/Sources/MedicationCheck/main.swift` — see the header comment for context on what would need to change to re-light it.
+`MEDICATION_CONFIG` / `medications.toml` is removed — the plugin is config-less.

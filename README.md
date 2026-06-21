@@ -1,21 +1,25 @@
-# Dardes Marketplace
+# Dardes Labs — Claude Code Marketplace
 
-A personal Claude Code plugin marketplace.
+Claude Code plugins from **[Dardes Labs](https://github.com/Dardes-Labs)**, and a window into the apps we build.
 
 ## Install
 
 ```bash
-/plugin marketplace add agnislav-o/claude-marketplace
+/plugin marketplace add Dardes-Labs/claude-marketplace
 /plugin install medication-reminder@dardes
 ```
-
-Replace `agnislav-o/claude-marketplace` with the actual remote once pushed.
 
 ## Plugins
 
 | Plugin | Description |
 | --- | --- |
-| [medication-reminder](plugins/medication-reminder) | SessionStart hook that checks Apple HealthKit and nudges you if today's meds aren't logged — priority-aware, ADHD-friendly. |
+| [medication-reminder](plugins/medication-reminder) | Companion plugin for **TaDa**, our per-dose medication-adherence iOS app. Reads per-dose adherence from a shared iCloud `state.json`, nudges you about doses you haven't logged, and marks a dose Taken/Skipped from the Mac — kept in sync with Apple Health by the app. ADHD-friendly. *(plugin id `medication-reminder`, rename to `tada` pending.)* |
+
+## Apps from Dardes Labs
+
+- **TaDa** — per-dose medication adherence for people who forget. An iOS app backed by Apple Health, plus the companion Mac plugin above. *In development.*
+
+_More to come._
 
 ## Repo layout
 
@@ -33,7 +37,7 @@ Replace `agnislav-o/claude-marketplace` with the actual remote once pushed.
         └── ...                # plugin-specific code
 ```
 
-## Adding a new plugin
+## Adding a plugin
 
 1. Create `plugins/<name>/.claude-plugin/plugin.json`.
 2. Add its source entry to `.claude-plugin/marketplace.json`.

@@ -1,10 +1,10 @@
 {
   "name": "medication-reminder",
   "version": "0.1.0",
-  "description": "SessionStart hook that checks whether today's medications have been logged (via Apple HealthKit) and sends a priority-aware macOS notification if not.",
+  "description": "Companion plugin for the TaDa iOS medication app. Reads per-dose state from a shared iCloud state.json, nudges about doses you haven't logged, and lets you mark Taken or Skipped from the Mac.",
   "author": {
     "name": "agnislav-o",
     "email": "agnislav@gmail.com"
   },
-  "keywords": ["health", "healthkit", "reminder", "adhd", "medication", "macos"]
+  "keywords": ["health", "medication", "adhd", "reminder", "macos", "tada"]
 }
