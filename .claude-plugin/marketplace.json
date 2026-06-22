@@ -6,8 +6,8 @@
   },
   "plugins": [
     {
-      "name": "medication-reminder",
-      "source": "./plugins/medication-reminder",
+      "name": "tada-medication-reminder",
+      "source": "./plugins/tada-medication-reminder",
       "description": "Companion Claude Code plugin for the TaDa iOS medication app. Reads per-dose adherence from a shared iCloud state.json and lets you mark a dose Taken or Skipped from the Mac; the iOS app mirrors it into Apple Health."
     }
   ]

@@ -12,7 +12,7 @@ The marketplace `name` is `dardes` (so installs read `<plugin>@dardes`); the own
 
 ## Plugins here
 
-- **medication-reminder** — the companion macOS plugin for **TaDa**, Dardes Labs' per-dose medication-adherence iOS app. The plugin is **config-less and app-dependent**: it reads a per-dose `state.json` that the TaDa iOS app syncs to iCloud Drive, and **never touches HealthKit**. Without the app it is inert. Its own README documents the target model.
+- **tada-medication-reminder** — the companion macOS plugin for **TaDa**, Dardes Labs' per-dose medication-adherence iOS app. The plugin is **config-less and app-dependent**: it reads a per-dose `state.json` that the TaDa iOS app syncs to iCloud Drive, and **never touches HealthKit**. Without the app it is inert. Its own README documents how it works (SessionStart notifier + a `/tada` log command).
   - **TaDa's product and design spec live in a separate repo** — `Dardes-Labs/tada-ios` (private). This marketplace carries only the installable companion plugin; don't reconstruct TaDa's architecture here — reference that repo.
 
 ## Conventions

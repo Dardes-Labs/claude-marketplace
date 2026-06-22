@@ -1,0 +1,10 @@
+{
+  "name": "tada-medication-reminder",
+  "version": "0.2.0",
+  "description": "Companion plugin for the TaDa iOS medication app. Reads per-dose state from a shared iCloud state.json, notifies at session start about doses you haven't logged, and marks a dose Taken or Skipped from the Mac (the app mirrors it into Apple Health).",
+  "author": {
+    "name": "Dardes Labs",
+    "email": "agnislav@gmail.com"
+  },
+  "keywords": ["health", "medication", "adhd", "reminder", "macos", "tada"]
+}

@@ -6,14 +6,14 @@ Claude Code plugins from **[Dardes Labs](https://github.com/Dardes-Labs)**, and 
 
 ```bash
 /plugin marketplace add Dardes-Labs/claude-marketplace
-/plugin install medication-reminder@dardes
+/plugin install tada-medication-reminder@dardes
 ```
 
 ## Plugins
 
 | Plugin | Description |
 | --- | --- |
-| [medication-reminder](plugins/medication-reminder) | Companion plugin for **TaDa**, our per-dose medication-adherence iOS app. Reads per-dose adherence from a shared iCloud `state.json`, nudges you about doses you haven't logged, and marks a dose Taken/Skipped from the Mac — kept in sync with Apple Health by the app. ADHD-friendly. *(plugin id `medication-reminder`, rename to `tada` pending.)* |
+| [tada-medication-reminder](plugins/tada-medication-reminder) | Companion plugin for **TaDa**, our per-dose medication-adherence iOS app. Reads per-dose adherence from a shared iCloud `state.json`, notifies you about doses you haven't logged, and marks a dose Taken/Skipped from the Mac — kept in sync with Apple Health by the app. ADHD-friendly. |
 
 ## Apps from Dardes Labs
 
