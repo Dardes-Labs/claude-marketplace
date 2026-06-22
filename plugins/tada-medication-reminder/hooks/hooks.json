@@ -2,8 +2,12 @@
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh"
+          }
+        ]
       }
     ]
   }
