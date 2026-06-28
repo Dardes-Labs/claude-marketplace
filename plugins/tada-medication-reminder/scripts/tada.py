@@ -5,8 +5,8 @@ TaDa — Mac companion for the per-dose medication state.json.
 The TaDa iOS app reads your schedule from Apple Health and syncs a per-dose
 state.json into iCloud Drive. This CLI is the Mac surface over that file:
 
-    tada notify                       macOS notification for any dose still pending
-                                      past its scheduled time today (SessionStart hook)
+    tada session-context              session-start summary of today's missed &
+                                      upcoming doses (SessionStart hook; silent if no data)
     tada status                       print today's doses and their status
     tada take <med> [--at HH:MM|prn]  mark a dose Taken
     tada skip <med> [--at HH:MM|prn]  mark a dose Skipped
@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import select
 import sys
 import tempfile
 from datetime import date, datetime, timezone
@@ -32,9 +32,12 @@ ICON = {"taken": "✓", "skipped": "✗", "pending": "○"}
 
 
 def state_path():
+    # The iOS app (bundle es.dard.tada) writes into its own iCloud Documents
+    # container, which macOS exposes under this path. Override with the env vars
+    # below for tests or a non-standard container.
     folder = os.environ.get(
         "MEDICATION_ICLOUD_DIR",
-        os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/TaDa Medication Tracker"),
+        os.path.expanduser("~/Library/Mobile Documents/iCloud~es~dard~tada/Documents"),
     )
     return os.environ.get("MEDICATION_STATE_FILE", os.path.join(folder, "state.json"))
 
@@ -95,45 +98,112 @@ def atomic_write(path, data):
         raise
 
 
-# --- notify (SessionStart hook) --------------------------------------------
+# --- session-context (SessionStart hook) -----------------------------------
+#
+# SessionStart output is special-cased by Claude Code. On exit 0 we emit one
+# JSON object that drives two channels at once:
+#   • systemMessage     — shown to the user directly (the line they see in chat)
+#   • additionalContext — added to Claude's context so it can act on /tada
+#                         without re-announcing what the user already saw
+# Stays silent (prints nothing) whenever there's no data for today.
 
-def overdue_pending(data):
+def categorize_pending(data):
+    """Today's pending *scheduled* doses, split into (missed, upcoming) by the
+    clock and sorted by time. PRN (no scheduled time) is excluded — as-needed
+    doses never nag at session start."""
     now = now_hm()
-    out = []
+    missed, upcoming = [], []
     for med in data.get("medications", []):
         for dose in med.get("doses", []):
             if dose.get("status") != "pending":
                 continue
             when = parse_hm(dose.get("scheduled_at"))
-            if when is not None and when <= now:
-                out.append((med, dose))
-    return out
+            if when is None:
+                continue
+            (missed if when <= now else upcoming).append((med, dose))
+    by_time = lambda md: parse_hm(md[1].get("scheduled_at"))
+    missed.sort(key=by_time)
+    upcoming.sort(key=by_time)
+    return missed, upcoming
 
 
-def macos_notify(title, body):
-    esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
-    script = 'display notification "%s" with title "%s"' % (esc(body), esc(title))
+def today_label():
+    now = datetime.now()
+    return now.strftime("%a %b ") + str(now.day)  # e.g. "Tue Jun 22" (no zero-pad)
+
+
+def render_summary(missed, upcoming):
+    """The user-facing line(s) — TaDa's product voice lives here."""
+    lines = ["TaDa — %s" % today_label()]
+    if missed:
+        lines.append("Missed (overdue, not logged):")
+        lines += ["  • %s — due %s" % (m.get("name", "?"), d.get("scheduled_at", ""))
+                  for m, d in missed]
+    if upcoming:
+        lines.append("Still to take today:")
+        lines += ["  • %s — %s" % (m.get("name", "?"), d.get("scheduled_at", ""))
+                  for m, d in upcoming]
+    lines.append("Log with /tada take <med> or /tada skip <med>.")
+    return "\n".join(lines)
+
+
+def render_context(missed, upcoming):
+    """A terse note for Claude — the user has already seen the summary."""
+    fmt = lambda items: ", ".join(
+        "%s (%s)" % (m.get("name", "?"), d.get("scheduled_at", "")) for m, d in items) or "none"
+    return ("TaDa ran at session start and already showed the user this summary, so don't "
+            "repeat it unless they ask. Today — missed/overdue: %s; still to take later: %s. "
+            "To log on request: /tada take <med> or /tada skip <med> (optionally --at HH:MM)."
+            % (fmt(missed), fmt(upcoming)))
+
+
+def emit(system_message, context):
+    print(json.dumps({
+        "systemMessage": system_message,
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        },
+    }))
+
+
+def hook_source():
+    """The SessionStart `source` (startup/resume/clear/compact) from the event
+    JSON on stdin, or None when no payload is piped (run by hand, idle stdin).
+
+    Must never block: this runs inside a SessionStart hook, which holds up the
+    whole session until it exits. Claude Code pipes the JSON and closes stdin,
+    so it's ready immediately; if nothing is ready we give up rather than wait.
+    """
     try:
-        subprocess.run(["osascript", "-e", script], check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError:
-        pass
+        if sys.stdin.isatty():
+            return None
+        ready, _, _ = select.select([sys.stdin], [], [], 0.25)
+        if not ready:
+            return None
+        return (json.load(sys.stdin) or {}).get("source")
+    except (ValueError, OSError):
+        return None
 
 
-def cmd_notify(_args):
+def cmd_session_context(_args):
+    # Compaction is a mid-session continuation, not a fresh sitting — don't
+    # re-surface a reminder the user already saw when the session opened.
+    if hook_source() == "compact":
+        return 0
     try:
         data = load_state(state_path())
     except (OSError, ValueError, StateError):
-        return 0  # missing / malformed -> stay silent (non-intrusive)
+        return 0  # missing / malformed -> silent: no data, claim nothing
     if is_stale(data):
-        return 0  # date guard: stale file == no data for today, never "done"
-    pending = overdue_pending(data)
-    if not pending:
+        return 0  # today's file not published yet -> silent
+    missed, upcoming = categorize_pending(data)
+    if not missed and not upcoming:
+        emit("TaDa — all of today's doses are logged. ✓",
+             "TaDa ran at session start: all of today's scheduled doses are already "
+             "logged. The user has been shown this; nothing pending, no action needed.")
         return 0
-    labels = ["%s %s" % (m.get("name", "?"), d.get("scheduled_at", "")) for m, d in pending]
-    count = len(labels)
-    body = ", ".join(labels[:4]) + ("" if count <= 4 else ", +%d more" % (count - 4))
-    macos_notify("TaDa — %d dose%s pending" % (count, "" if count == 1 else "s"), body)
+    emit(render_summary(missed, upcoming), render_context(missed, upcoming))
     return 0
 
 
@@ -323,7 +393,7 @@ def cmd_log(args, status):
 def build_parser():
     parser = argparse.ArgumentParser(prog="tada", description="TaDa Mac companion for the per-dose medication state.json")
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("notify", help="notify about overdue pending doses (used by the hook)")
+    sub.add_parser("session-context", help="session-start summary of today's doses (used by the hook)")
     sub.add_parser("status", help="print today's doses and their status")
     for name, helptext in (("take", "mark a dose Taken"),
                            ("skip", "mark a dose Skipped"),
@@ -338,8 +408,8 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     cmd = args.cmd or "status"
-    if cmd == "notify":
-        return cmd_notify(args)
+    if cmd == "session-context":
+        return cmd_session_context(args)
     if cmd == "status":
         return cmd_status(args)
     return cmd_log(args, {"take": "taken", "skip": "skipped", "undo": "undo"}[cmd])
